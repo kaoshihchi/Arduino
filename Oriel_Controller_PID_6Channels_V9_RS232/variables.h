@@ -44,6 +44,7 @@ bool motorlimit            = false;
 
 void count(void);
 void MotorRun(void);
+void processSerialCommands(Stream& serialPort);
 
 int encoderValue_ch1 = 0;
 int encoderValue_ch2 = 0;
