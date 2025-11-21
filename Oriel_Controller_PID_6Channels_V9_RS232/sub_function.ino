@@ -44,9 +44,11 @@ void processSerialCommands(Stream& serialPort) {
           digitalWrite(pinEn_running, HIGH);
           digitalWrite(HbridgeLow, LOW);
 
-          digitalWrite(HbridgeHigh, HIGH);
-          delay(Command[3]);
-          digitalWrite(HbridgeHigh, LOW);
+//          digitalWrite(HbridgeHigh, HIGH);
+//          delay(Command[3]);
+//          digitalWrite(HbridgeHigh, LOW);
+          analogWrite(HbridgeHigh, byte(pwmNumber));
+          
 
           digitalWrite(pinEn_running, LOW);
           break;
@@ -77,16 +79,26 @@ void processSerialCommands(Stream& serialPort) {
           break;
 
         // 0x02 Target Position: Moving to target position
+        // 0x02 Target Position: Moving to target position
         case 0x02:
+          // Calculate final targetValue from command bytes
           if (Command[7] == 1)
             targetValue = U8toU32(Command[3], Command[4], Command[5], Command[6]);
           else
             targetValue = (-1) * U8toU32(Command[3], Command[4], Command[5], Command[6]);
             
+          // --- MODIFICATION FOR UNIDIRECTIONAL APPROACH ---
+          // 1. Calculate the Overshoot Target (100 steps behind the final target)
+          // This forces the final move to always be in the positive direction (increasing steps).
+          tempTarget = targetValue - BACKLASH_OVERSHOOT_STEPS;
+          
+          // 2. Set the *first* target to the overshoot point
+          // The MotorRun loop will initially target tempTarget.
+          
           digitalWrite(pinEn_running, HIGH);
           runningstatus = true;
           break;
-
+  
         // 0x03 Changing PID parameters
         case 0x03:
           pNumber = Command[3] * 0.001;
@@ -315,76 +327,81 @@ void ReadEncoderState()
 }
 
 // When runningstatus is true
+// When runningstatus is true
+// When runningstatus is true
 void MotorRun() 
 {
-  // Serial1.print("Run"); 
-  // runningstatus = true;
-  // motorlimit = false;
+  // If runningstatus is true, it drives the motor until it gets to the targetValue.
+  // If runningstatus is false, it stops output. 
   
-  // If runningstatus is true, it drives the motor until it gets to the targetValue. If runningstatus is false, it stops output. 
-  errorNumber1 = abs(targetValue - *encoderValue);
-  if ((targetValue - *encoderValue) > 0){
-//    if (errorDirection != true){
-//      If the direction changes, it stops the motor. 
-//      analogWrite(HbridgeHigh, 0);
-//    }
-    errorDirection = true; 
+  // --- MODIFICATION: Determine the Active Target for PID Loop ---
+  int activeTarget = tempTarget;
+  
+  // Check if we have reached the overshoot target (tempTarget).
+  // Check if: 1. Within threshold of tempTarget, AND 2. tempTarget is not already the final target.
+  if (abs(*encoderValue - tempTarget) <= thresholdValue && tempTarget != targetValue) {
+      // Stage has reached the overshoot target. Switch to the final target.
+      tempTarget = targetValue;
+      activeTarget = targetValue;
+  } else if (tempTarget == targetValue) {
+      // Stage is already performing the final approach.
+      activeTarget = targetValue;
+  }
+  // The logic ensures the final move is from (targetValue - Overshoot) to targetValue (positive direction).
+
+  errorNumber1 = abs(activeTarget - *encoderValue);
+  
+  // Deciding the direction
+  if ((activeTarget - *encoderValue) > 0){
+    errorDirection = true; // Positive direction (encoder value increasing)
   }
   else{
-//    if (errorDirection != false){
-//      // analogWrite(HbridgeHigh, 0);
-//    }
-    errorDirection = false; 
+    errorDirection = false; // Negative direction (encoder value decreasing)
   }
   
-  // Serial1.print(errorNumber1); 
-  
-  // Decide the direction
+  // Decide the direction of motor output based on errorDirection
   if (runningstatus == true){
     // Judge the timming of shutting down the motor
-    if (errorNumber1 > thresholdValue){
+    if (errorNumber1 > thresholdValue){ 
       // Deciding the direction
-      if (errorDirection == true) {
+      if (errorDirection == true) { // Needs to move positive (encoder increasing)
         HbridgeHigh = pinMotorMinus_running;
         HbridgeLow = pinMotorPlus_running;
       }
-      else {
+      else { // Needs to move negative (encoder decreasing)
         HbridgeHigh = pinMotorPlus_running;
         HbridgeLow = pinMotorMinus_running;
       }
       digitalWrite(HbridgeLow, LOW);
       
       //Serial1.println(pNumber * float(errorNumber1) + dNumber * float(errorNumber1 - errorNumber2));
-  
-      //Correct the problem of motor speed slow
+//Correct the problem of motor speed slow
 //      if (errorNumber1 == errorNumber2)
 //        pwmSpeedMin++;
 //      else
 //        pwmSpeedMin--;
-
-      // set motor end-limit
+// set motor end-limit
       if (pwmNumber >= pwmSpeedMax && errorNumber1 == errorNumber2){
-        fullpowercount++; 
+        fullpowercount++;
         if (fullpowercount > threshold){
           runningstatus = false; 
-          fullpowercount = 0; 
+          fullpowercount = 0;
         }
       }
 //      else
-//        fullpowercount = 0; 
-      
-      // calculating pwm by PID
+//        fullpowercount = 0;
+// calculating pwm by PID
       pwmSpeedMin = constrain(pwmSpeedMin, pwmSpeedValue, 100);
       pwmNumber = constrain(pNumber * float(errorNumber1) + dNumber * float(errorNumber1 - errorNumber2), pwmSpeedMin, pwmSpeedMax);
       // Serial1.print(*encoderValue);
-
-      // Use the slowest speed to achieve the final position
+// Use the slowest speed to achieve the final position
       if (errorNumber1 < slowarea_num){ //500
-        pwmNumber = Speed_lowest;  //10
+        pwmNumber = Speed_lowest;
+//10
       }
   
       // Output motor power
-      digitalWrite(HbridgeHigh, HIGH); 
+      digitalWrite(HbridgeHigh, HIGH);
       delay(byte(pwmNumber)); 
       digitalWrite(HbridgeHigh, LOW); 
       //analogWrite(HbridgeHigh, byte(pwmNumber)); 
@@ -393,20 +410,21 @@ void MotorRun()
         delay(time_loop);
       }
     }
-     else
+    // --- MODIFICATION: End of Movement Check ---
+    // If the stage is within the thresholdValue of the *final* target, stop.
+    else if (errorNumber1 <= thresholdValue && activeTarget == targetValue) {
        runningstatus = false; 
+    }
   }  
   else if (runningstatus == false){
     // Stop output
     analogWrite(HbridgeHigh, 0);
-
-    // Disable the motor
+// Disable the motor
     digitalWrite(pinEn_running, LOW);
   
     // Serial1.print(0xff); Serial1.print(0x00);
     pwmSpeedMin = pwmSpeedValue;
   }
-  
 }
 
 //-------------------------------------------------------------------------------------------------------------------------------------

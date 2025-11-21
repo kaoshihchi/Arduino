@@ -102,3 +102,11 @@ byte pinEn_ch6 = 47;
 byte HbridgeHigh = pinMotorMinus_running;
 byte HbridgeLow = pinMotorPlus_running;
 //-----------------------------------------------------------------------------------------------------------
+// --- ADD to motor control parameters in variables.h ---
+
+// CONSTANT: Adjust this value based on your stage's measured backlash (steps). 
+// It must be greater than the maximum mechanical backlash.
+const int BACKLASH_OVERSHOOT_STEPS = 200; 
+
+// VARIABLE: Holds the temporary target during the two-step move.
+int tempTarget = 0;
