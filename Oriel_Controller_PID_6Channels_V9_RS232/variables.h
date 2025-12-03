@@ -17,7 +17,7 @@ byte U8_a, U8_b, U8_c, U8_d;
 byte position_direction = 0;
 byte channel_num = 1;
 
-int thresholdValue = 2; // Threshold for "Target Reached"
+int thresholdValue = 10; // Threshold for "Target Reached"
 byte fullpowercount = 0;
 
 // --- MOTOR POWER LIMIT ---

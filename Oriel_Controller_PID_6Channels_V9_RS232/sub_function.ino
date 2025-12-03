@@ -57,12 +57,14 @@ void ReadEncoderState()
 }
 
 // ================================================================
-// REVISED MOTOR CONTROL LOOP (With Motion Profiling - No Slow Area Clamp)
+// REVISED MOTOR CONTROL LOOP
 // ================================================================
+unsigned long lastMonitorTime = 0; // Timer to prevent flooding USB
+
 void MotorRun() {
   // 1. Safety & Idle Check
   if (!runningstatus) {
-    analogWrite(HbridgeHigh, 0);   
+    analogWrite(HbridgeHigh, 0);
     analogWrite(HbridgeLow, 0);    
     digitalWrite(pinEn_running, LOW); 
     return; 
@@ -70,39 +72,35 @@ void MotorRun() {
 
   // 2. Sample Rate Control (5ms loop)
   if (millis() - lastPIDTime < loopTimeMS) {
-    return; 
+    return;
   }
   lastPIDTime = millis();
 
-  // --- RAMP GENERATOR (Motion Profiling) ---
+  // --- RAMP GENERATOR ---
   long distToFinal = finalTarget - tempTarget;
-
   if (distToFinal != 0) {
-    // If we are far away, move tempTarget by rampStep (Velocity Limit)
     if (abs(distToFinal) > rampStep) {
       if (distToFinal > 0) tempTarget += rampStep;
       else                 tempTarget -= rampStep;
     } else {
-      // If we are close (less than one step size), snap to final
       tempTarget = finalTarget;
     }
   }
   
   // --- BACKLASH HANDLING & COMPLETION ---
   long currentPos = *encoderValue;
-  
-  // Check if we reached the current ramp goal (tempTarget)
   if (tempTarget == finalTarget && abs(currentPos - tempTarget) <= thresholdValue) {
-      
-      // If this goal was the Overshoot target, now switch to Real Target
       if (finalTarget != targetValue) {
-          finalTarget = targetValue; 
+          finalTarget = targetValue;
       } 
-      // If this goal WAS the Real Target, we are done.
       else {
           runningstatus = false;
           analogWrite(HbridgeHigh, 0);
           digitalWrite(pinEn_running, LOW);
+          
+          // Print Final Status to Native USB
+          SerialUSB.print("Target Reached. Final Pos: ");
+          SerialUSB.println(currentPos);
           return;
       }
   }
@@ -112,31 +110,28 @@ void MotorRun() {
   
   // Direction Setup
   float currentKp, currentKd;
+  int signedPowerMultiplier = 1; // Used for monitoring output
+
   if (currentError > 0) {
-    HbridgeHigh = pinMotorMinus_running; 
+    HbridgeHigh = pinMotorMinus_running;
     HbridgeLow = pinMotorPlus_running; 
     currentKp = Kp_Pos;
     currentKd = Kd_Pos;
+    signedPowerMultiplier = 1; 
   } else {
     HbridgeHigh = pinMotorPlus_running;
     HbridgeLow = pinMotorMinus_running;
     currentKp = Kp_Neg;
     currentKd = Kd_Neg;
+    signedPowerMultiplier = -1;
   }
 
   // PID Math
-  long errorDelta = currentError - prevError; 
+  long errorDelta = currentError - prevError;
   float pidTerm = (currentKp * abs(currentError)) + (currentKd * abs(errorDelta));
   
   // Output Generation
-  int outputPWM = 0;
-  
-  // --- UPDATE: Removed Slow Area Constraint ---
-  // We rely on PID + MinPWM to drive the motor into position.
-  // The Ramp Generator already handles velocity profiling.
-  outputPWM = (int)(pidTerm + minPWM);
-  
-  // Hard Limits (User defined Max)
+  int outputPWM = (int)(pidTerm + minPWM);
   outputPWM = constrain(outputPWM, 0, pwmSpeedMax);
 
   // Drive
@@ -145,6 +140,20 @@ void MotorRun() {
   analogWrite(HbridgeHigh, outputPWM);
 
   prevError = currentError;
+
+  // ============================================================
+  // TELEMETRY OUTPUT (Native USB Only)
+  // ============================================================
+  // Print every 50ms to avoid flooding the buffer (20Hz update rate)
+  if (millis() - lastMonitorTime > 50) { 
+    lastMonitorTime = millis();
+    
+    // Format: "Pos:[value] Pwr:[signed_value]"
+    SerialUSB.print("Pos:");
+    SerialUSB.print(currentPos);
+    SerialUSB.print(" Pwr:");
+    SerialUSB.println(outputPWM * signedPowerMultiplier); 
+  }
 }
 
 // ================================================================
@@ -153,21 +162,34 @@ void MotorRun() {
 void processSerialCommands(Stream& serialPort) {
   if (serialPort.available() < COMMANDLENGTH) return;
   
+  // Read Data
   for (int i = 0; i < COMMANDLENGTH; i++) {
     Command[i] = serialPort.read();
   }
 
+  // --- NEW: Echo Received Command to Native USB ---
+  // Only echo if the command came from Serial1 (External)
+  if (&serialPort == &Serial1) {
+    SerialUSB.print("RX[Hex]: ");
+    for (int i = 0; i < COMMANDLENGTH; i++) {
+       if(Command[i] < 0x10) SerialUSB.print("0"); // Leading zero for clean format
+       SerialUSB.print(Command[i], HEX);
+       SerialUSB.print(" ");
+    }
+    SerialUSB.println(); 
+  }
+
+  // Normal Command Processing
   if (Command[0] != 0xFF) return;
   if (Command[1] != 0x00 && Command[1] != name_due) return;
-
+  
   switch (Command[2]) {
     
-    case 0x00: {
-      int manualPWM = Command[3]; 
+    case 0x00: { // Manual Move
+      int manualPWM = Command[3];
       int dir = Command[4];
-      int duration = Command[5]; // Read duration from 6th byte (index 5)
+      int duration = Command[5]; 
 
-      // Set Direction Pins based on Command[4]
       if (dir == 1) {
         HbridgeHigh = pinMotorMinus_running;
         HbridgeLow = pinMotorPlus_running;
@@ -176,21 +198,19 @@ void processSerialCommands(Stream& serialPort) {
         HbridgeLow = pinMotorMinus_running;
       }
       
-      // Start Motor Movement
-      digitalWrite(pinEn_running, HIGH);   // Enable driver
-      digitalWrite(HbridgeLow, LOW);       // Set Low side
-      analogWrite(HbridgeHigh, manualPWM); // Set PWM speed
+      digitalWrite(pinEn_running, HIGH);
+      digitalWrite(HbridgeLow, LOW);
+      analogWrite(HbridgeHigh, manualPWM);
       
-      // Handle Duration
+      // Echo Manual move status to USB
+      SerialUSB.print("Manual Move. PWM: ");
+      SerialUSB.println(manualPWM);
+
       if (duration > 0) {
-        delay(duration); // Wait for the specified duration (blocking)
-        
-        // Stop Motor immediately after delay
-        analogWrite(HbridgeHigh, 0); 
+        delay(duration);
+        analogWrite(HbridgeHigh, 0);
         digitalWrite(pinEn_running, LOW);
       }
-      // Note: If duration is 0, the motor continues running until a stop command is sent.
-      
       break;
     }
 
@@ -200,27 +220,31 @@ void processSerialCommands(Stream& serialPort) {
       Respond[2] = runningstatus;
       Respond[3] = (*encoderValue >= 0) ? 1 : 0; 
       U32toU8(abs(*encoderValue));
-      Respond[4] = U8_a; Respond[5] = U8_b; Respond[6] = U8_c; Respond[7] = U8_d;
+      Respond[4] = U8_a; Respond[5] = U8_b;
+      Respond[6] = U8_c; Respond[7] = U8_d;
+      
+      // NOTE: writing back to 'serialPort' ensures Serial1 replies to Serial1. 
+      // This preserves existing functionality.
       for (int i = 0; i < 8; i++) serialPort.write(Respond[i]);
       break;
     }
 
-    // 0x02: Go To Target (With Backlash Comp + Ramping)
+    // 0x02: Go To Target 
     case 0x02: {
       long rawTarget = U8toU32(Command[3], Command[4], Command[5], Command[6]);
       if (Command[7] == 0) rawTarget *= -1; 
       
       targetValue = rawTarget;
-      
       // Initialize the Ramp
       tempTarget = *encoderValue; 
       finalTarget = targetValue - BACKLASH_OVERSHOOT_STEPS; 
       
       runningstatus = true;
+      SerialUSB.print("Auto Move. Target: "); 
+      SerialUSB.println(targetValue);
       break;
     }
-
-    // 0x03: Set Parameters (Added Ramp Speed config)
+    
     case 0x03: {
       float newP = Command[3] * 0.001;
       Kp_Pos = newP;
@@ -228,30 +252,25 @@ void processSerialCommands(Stream& serialPort) {
       Speed_lowest = Command[4]; 
       break;
     }
-
-    // 0x04: Change Channel
     case 0x04: {
       SelectMotorChannel(Command[3]);
+      SerialUSB.print("Ch Changed to: "); SerialUSB.println(Command[3]); 
       break;
     }
-
-    // 0x05: Set Current Position
     case 0x05: {
       long newVal = U8toU32(Command[3], Command[4], Command[5], Command[6]);
       if (Command[7] == 0) newVal *= -1;
       *encoderValue = newVal;
+      SerialUSB.print("Pos Set to: "); SerialUSB.println(newVal); 
       break;
     }
-
-    // 0x06: E-Stop
     case 0x06: {
       runningstatus = false;
       analogWrite(HbridgeHigh, 0); 
       digitalWrite(pinEn_running, LOW);
+      SerialUSB.println("E-STOP"); 
       break;
     }
-    
-    // 0x07: Set Name
     case 0x07: {
       name_due = Command[3];
       dueFlashStorage.write(0, name_due);
@@ -259,6 +278,7 @@ void processSerialCommands(Stream& serialPort) {
     }
   }
 }
+// [Rest of file: SelectMotorChannel, U8toU16, etc. remain unchanged]
 
 void SelectMotorChannel(int ch) {
   detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch1));
