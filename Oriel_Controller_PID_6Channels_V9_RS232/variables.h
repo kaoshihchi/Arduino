@@ -17,18 +17,18 @@ byte U8_a, U8_b, U8_c, U8_d;
 byte position_direction = 0;
 byte channel_num = 1;
 
-int thresholdValue = 2; // Increased slightly to prevent hunting with high PID
+int thresholdValue = 2; // Threshold for "Target Reached"
 byte fullpowercount = 0;
 
-// --- OLD PARAMETERS (Kept if needed for legacy compatibility, but largely replaced) ---
-// int errorNumber1, errorNumber2 = 0; // Replaced by currentError and prevError
-// float pNumber, iNumber, dNumber;    // Replaced by Kp_Pos, Kp_Neg, etc.
-byte pwmSpeedMax = 100;              // Re-enabled: Max 8-bit PWM value
-// byte pwmSpeedMin = 0;               // Replaced by minPWM
+// --- MOTOR POWER LIMIT ---
+// Max PWM value (0-255). 
+// 100 = ~39% Duty Cycle (Current Limit)
+byte pwmSpeedMax = 100;              
 
 byte pwmSpeedValue = 1;
-byte Speed_lowest = 100; // Max PWM allowed in "Slow Area"
-int slowarea_num = 500;  // Steps from target to start slowing down
+// Speed_lowest is no longer used for clamping, but kept for compatibility
+byte Speed_lowest = 100; 
+int slowarea_num = 500;
 
 // --- NEW PID & CONTROL PARAMETERS ---
 // Directional P Gains (Proportional)
@@ -40,17 +40,19 @@ float Kd_Pos = 0.0;
 float Kd_Neg = 0.0;
 
 // Minimum PWM to overcome static friction (Stiction)
-// Find this by increasing until motor *just* starts moving.
-int minPWM = 30; 
+// Crucial for low-speed movement near target
+int minPWM = 60; 
 
 // Loop timing (Non-blocking)
 unsigned long lastPIDTime = 0;
 int loopTimeMS = 5; // Run PID loop every 5ms (200Hz)
 
-// Backlash Compensation
+// Backlash Compensation & Motion Profiling
 const int BACKLASH_OVERSHOOT_STEPS = 200; // Steps to overshoot before returning
-long tempTarget = 0; // The intermediate target
-long prevError = 0;  // For Derivative calculation
+long finalTarget = 0;      // The ultimate destination
+long tempTarget = 0;       // The "rabbit" the PID chases (Ramp Generator)
+long rampStep = 5;         // Max steps to change tempTarget per loop (Velocity Limit)
+long prevError = 0;        // For Derivative calculation
 
 // Using pointer to send encoder signal to each channels
 int *encoderValue;
