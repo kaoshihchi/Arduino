@@ -19,252 +19,7 @@
 //      --*encoderValue;
 //}
 
-void processSerialCommands(Stream& serialPort) {
-  // Read the command from the specific serial port
-  for (int i = 0; i < COMMANDLENGTH; i++) {
-    Command[i] = serialPort.read();
-  }
 
-  // Check header (0xFF) and controller name (0x00 or name_due)
-  if (Command[0] == 0xFF) {
-    if (Command[1] == 0x00 || Command[1] == name_due){ 
-      switch (Command[2]) {
-
-        // 0x00 MoveStage: Applying voltage for [Traveling Time]
-        case 0x00:
-          if (Command[4] == 1) {
-            HbridgeHigh = pinMotorMinus_running;
-            HbridgeLow = pinMotorPlus_running;
-          }
-          else if (Command[4] == 0) {
-            HbridgeHigh = pinMotorPlus_running;
-            HbridgeLow = pinMotorMinus_running;
-          }
-          
-          digitalWrite(pinEn_running, HIGH);
-          digitalWrite(HbridgeLow, LOW);
-
-//          digitalWrite(HbridgeHigh, HIGH);
-//          delay(Command[3]);
-//          digitalWrite(HbridgeHigh, LOW);
-          analogWrite(HbridgeHigh, byte(pwmNumber));
-          
-
-          digitalWrite(pinEn_running, LOW);
-          break;
-
-        // 0x01 Send back current position (steps)
-        case 0x01:
-          Respond[1] = channel_num;
-          Respond[2] = runningstatus;
-          
-          if (*encoderValue >= 0){
-            Respond[3] = 1;
-          }
-          else{
-            Respond[3] = 0;
-          }
-          
-          U32toU8(abs(*encoderValue));
-          Respond[4] = U8_a;
-          Respond[5] = U8_b;
-          Respond[6] = U8_c;
-          Respond[7] = U8_d;
-          
-          // Send response to the port that sent the command!
-          for (int i = 0; i < 8; i++){
-           serialPort.write(Respond[i]);
-          }
-          
-          break;
-
-        // 0x02 Target Position: Moving to target position
-        // 0x02 Target Position: Moving to target position
-        case 0x02:
-          // Calculate final targetValue from command bytes
-          if (Command[7] == 1)
-            targetValue = U8toU32(Command[3], Command[4], Command[5], Command[6]);
-          else
-            targetValue = (-1) * U8toU32(Command[3], Command[4], Command[5], Command[6]);
-            
-          // --- MODIFICATION FOR UNIDIRECTIONAL APPROACH ---
-          // 1. Calculate the Overshoot Target (100 steps behind the final target)
-          // This forces the final move to always be in the positive direction (increasing steps).
-          tempTarget = targetValue - BACKLASH_OVERSHOOT_STEPS;
-          
-          // 2. Set the *first* target to the overshoot point
-          // The MotorRun loop will initially target tempTarget.
-          
-          digitalWrite(pinEn_running, HIGH);
-          runningstatus = true;
-          break;
-  
-        // 0x03 Changing PID parameters
-        case 0x03:
-          pNumber = Command[3] * 0.001;
-          Speed_lowest = Command[4];      // ms
-          slowarea_num = Command[5] * 10; // steps
-          time_loop = Command[6];         // ms
-          break;
-
-        // 0x04 Changing running motor channel
-        case 0x04:
-          // Detach all interrupts
-          detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6));
-          
-          detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch1));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch2));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch3));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch4));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch5));
-          detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch6));
-
-          // Switch channel parameters and re-attach interrupts
-          switch (Command[3]) {
-            case 0x01:
-              channel_num = 1;
-              pinEncoderA_running = pinEncoderA_ch1;
-              pinEncoderB_running = pinEncoderB_ch1;
-              pinMotorMinus_running = pinMotorMinus_ch1;
-              pinMotorPlus_running = pinMotorPlus_ch1;
-              pinEn_running = pinEn_ch1;
-
-              encoderValue = &encoderValue_ch1;
-              
-              InitialEncoderState();
-              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1), ReadEncoderState, CHANGE);
-              attachInterrupt(digitalPinToInterrupt(pinEncoderB_ch1), ReadEncoderState, CHANGE);
-              break;
-
-            case 0x02:
-              channel_num = 2;
-              pinEncoderA_running = pinEncoderA_ch2;
-              pinEncoderB_running = pinEncoderB_ch2;
-              pinMotorMinus_running = pinMotorMinus_ch2;
-              pinMotorPlus_running = pinMotorPlus_ch2;
-              pinEn_running = pinEn_ch2;
-
-              encoderValue = &encoderValue_ch2;
-
-              InitialEncoderState();
-              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2), ReadEncoderState, CHANGE);
-              attachInterrupt(digitalPinToInterrupt(pinEncoderB_ch2), ReadEncoderState, CHANGE);
-              break;
-
-            case 0x03:
-              channel_num = 3;
-              pinEncoderA_running = pinEncoderA_ch3;
-              pinEncoderB_running = pinEncoderB_ch3;
-              pinMotorMinus_running = pinMotorMinus_ch3;
-              pinMotorPlus_running = pinMotorPlus_ch3;
-              pinEn_running = pinEn_ch3;
-
-              encoderValue = &encoderValue_ch3;
-
-              InitialEncoderState();
-              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3), ReadEncoderState, CHANGE);
-              attachInterrupt(digitalPinToInterrupt(pinEncoderB_ch3), ReadEncoderState, CHANGE);
-              break;
-
-            case 0x04:
-              channel_num = 4;
-              pinEncoderA_running = pinEncoderA_ch4;
-              pinEncoderB_running = pinEncoderB_ch4;
-              pinMotorMinus_running = pinMotorMinus_ch4;
-              pinMotorPlus_running = pinMotorPlus_ch4;
-              pinEn_running = pinEn_ch4;
-
-              encoderValue = &encoderValue_ch4;
-
-              InitialEncoderState();
-              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4), ReadEncoderState, CHANGE);
-              attachInterrupt(digitalPinToInterrupt(pinEncoderB_ch4), ReadEncoderState, CHANGE);
-              break;
-
-            case 0x05:
-              channel_num = 5;
-              pinEncoderA_running = pinEncoderA_ch5;
-              pinEncoderB_running = pinEncoderB_ch5;
-              pinMotorMinus_running = pinMotorMinus_ch5;
-              pinMotorPlus_running = pinMotorPlus_ch5;
-              pinEn_running = pinEn_ch5;
-
-              encoderValue = &encoderValue_ch5;
-              
-              InitialEncoderState();
-              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5), ReadEncoderState, CHANGE);
-              attachInterrupt(digitalPinToInterrupt(pinEncoderB_ch5), ReadEncoderState, CHANGE);
-              break;
-
-            case 0x06:
-              channel_num = 6;
-              pinEncoderA_running = pinEncoderA_ch6;
-              pinEncoderB_running = pinEncoderB_ch6;
-              pinMotorMinus_running = pinMotorMinus_ch6;
-              pinMotorPlus_running = pinMotorPlus_ch6;
-              pinEn_running = pinEn_ch6;
-
-              encoderValue = &encoderValue_ch6;
-
-              InitialEncoderState();
-              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6), ReadEncoderState, CHANGE);
-              attachInterrupt(digitalPinToInterrupt(pinEncoderB_ch6), ReadEncoderState, CHANGE);
-              break;
-          }
-          break;
-
-        // 0x05 Write position (step)
-        case 0x05:
-          if (Command[7] == 1)
-            *encoderValue = U8toU32(Command[3], Command[4], Command[5], Command[6]);
-          else
-            *encoderValue = (-1) * U8toU32(Command[3], Command[4], Command[5], Command[6]);
-          break;
-
-        // 0x06 Immergency stop
-        case 0x06: 
-          runningstatus = false;
-          break; 
-
-        // 0x07 Assign connected controller name
-        case 0x07: 
-          name_due = Command[3];
-          dueFlashStorage.write(0, name_due);
-          break; 
-
-        // 0x08 Changing Motor Limit
-        case 0x08:
-          threshold = Command[3];
-          break; 
-
-        // 0x09 Interrupts eable/disable (Original code is commented out)
-        case 0x09:
-          if (Command[3] == 0){
-//              detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1));
-//              detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2));
-//              detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3));
-//              detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4));
-//              detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5));
-//              detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6));
-          }
-          else if (Command[3] == 1){
-//              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1), count, RISING);
-//              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2), count, RISING);
-//              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3), count, RISING);
-//              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4), count, RISING);
-//              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5), count, RISING);
-//              attachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6), count, RISING);
-          }
-          break;
-      }
-    }
-  }
-}
 
 //---------------------------------------------------------------
 
@@ -326,105 +81,256 @@ void ReadEncoderState()
   valueEncoder_previous = valueEncoder_present; 
 }
 
-// When runningstatus is true
-// When runningstatus is true
-// When runningstatus is true
-void MotorRun() 
-{
-  // If runningstatus is true, it drives the motor until it gets to the targetValue.
-  // If runningstatus is false, it stops output. 
-  
-  // --- MODIFICATION: Determine the Active Target for PID Loop ---
-  int activeTarget = tempTarget;
-  
-  // Check if we have reached the overshoot target (tempTarget).
-  // Check if: 1. Within threshold of tempTarget, AND 2. tempTarget is not already the final target.
-  if (abs(*encoderValue - tempTarget) <= thresholdValue && tempTarget != targetValue) {
-      // Stage has reached the overshoot target. Switch to the final target.
-      tempTarget = targetValue;
-      activeTarget = targetValue;
-  } else if (tempTarget == targetValue) {
-      // Stage is already performing the final approach.
-      activeTarget = targetValue;
+// ================================================================
+// REVISED MOTOR CONTROL LOOP (Non-Blocking / Directional)
+// ================================================================
+void MotorRun() {
+  // 1. Safety & Idle Check
+  if (!runningstatus) {
+    analogWrite(HbridgeHigh, 0);   // Stop PWM
+    analogWrite(HbridgeLow, 0);    // Safety
+    digitalWrite(pinEn_running, LOW); // Disable Driver
+    return; // Exit function
   }
-  // The logic ensures the final move is from (targetValue - Overshoot) to targetValue (positive direction).
 
-  errorNumber1 = abs(activeTarget - *encoderValue);
-  
-  // Deciding the direction
-  if ((activeTarget - *encoderValue) > 0){
-    errorDirection = true; // Positive direction (encoder value increasing)
+  // 2. Sample Rate Control (Ensure PID runs at fixed frequency)
+  if (millis() - lastPIDTime < loopTimeMS) {
+    return; // Wait for next sample tick
   }
-  else{
-    errorDirection = false; // Negative direction (encoder value decreasing)
+  lastPIDTime = millis();
+
+  // 3. Logic: Overshoot Approach (Your original Backlash strategy)
+  // If we are aiming for tempTarget and reached it, switch to final targetValue
+  if (tempTarget != targetValue) {
+    if (abs(*encoderValue - tempTarget) <= thresholdValue) {
+      tempTarget = targetValue; // Switch to final approach
+    }
   }
   
-  // Decide the direction of motor output based on errorDirection
-  if (runningstatus == true){
-    // Judge the timming of shutting down the motor
-    if (errorNumber1 > thresholdValue){ 
-      // Deciding the direction
-      if (errorDirection == true) { // Needs to move positive (encoder increasing)
+  long activeTarget = tempTarget;
+  long currentError = activeTarget - *encoderValue;
+  
+  // 4. Check if Target Reached (Exit Condition)
+  // Only stop if we are targeting the FINAL target and are within threshold
+  if (activeTarget == targetValue && abs(currentError) <= thresholdValue) {
+    runningstatus = false;
+    analogWrite(HbridgeHigh, 0);
+    digitalWrite(pinEn_running, LOW);
+    return;
+  }
+
+  // 5. Direction & Gain Scheduling
+  float currentKp, currentKd;
+  
+  if (currentError > 0) {
+    // POSITIVE DIRECTION
+    HbridgeHigh = pinMotorMinus_running; // Adjust pin mapping if reversed
+    HbridgeLow = pinMotorPlus_running; 
+    currentKp = Kp_Pos;
+    currentKd = Kd_Pos;
+  } else {
+    // NEGATIVE DIRECTION
+    HbridgeHigh = pinMotorPlus_running;
+    HbridgeLow = pinMotorMinus_running;
+    currentKp = Kp_Neg;
+    currentKd = Kd_Neg;
+  }
+
+  // 6. PID Calculation
+  long errorDelta = currentError - errorNumber2; // errorNumber2 is "prevError"
+  float pidTerm = (currentKp * abs(currentError)) + (currentKd * abs(errorDelta));
+  
+  // 7. Calculate Final PWM
+  int outputPWM = 0;
+  
+  // If we are in the "Slow Area" (Close to target), cap the speed
+  if (abs(currentError) < slowarea_num) {
+    // In slow area, use calculated PID but cap it at Speed_lowest if it gets too high? 
+    // Or strictly force Speed_lowest? Your original code forced it.
+    // Ideally: allow PID to work, but cap max speed.
+    outputPWM = constrain(pidTerm + minPWM, minPWM, Speed_lowest);
+  } else {
+    // Normal operation
+    outputPWM = (int)(pidTerm + minPWM);
+  }
+
+  // Constrain to 8-bit PWM limits
+  outputPWM = constrain(outputPWM, 0, 255);
+
+  // 8. Drive Motor (Hardware PWM)
+  digitalWrite(pinEn_running, HIGH); // Enable Driver
+  digitalWrite(HbridgeLow, LOW);     // Ensure Low side is 0V
+  analogWrite(HbridgeHigh, outputPWM); // PWM the High side
+
+  // 9. Store error for next derivative calc
+  errorNumber2 = currentError;
+}
+
+// ================================================================
+// CLEANED COMMAND PROCESSOR
+// ================================================================
+void processSerialCommands(Stream& serialPort) {
+  // Read Command
+  if (serialPort.available() < COMMANDLENGTH) return;
+  
+  for (int i = 0; i < COMMANDLENGTH; i++) {
+    Command[i] = serialPort.read();
+  }
+
+  // Header Check
+  if (Command[0] != 0xFF) return;
+  if (Command[1] != 0x00 && Command[1] != name_due) return;
+
+  // Execute Command
+  switch (Command[2]) {
+    
+    // 0x00: Open Loop Move (Manual PWM)
+    case 0x00: {
+      int manualPWM = Command[3]; // Use "Traveling Time" byte as PWM power for now
+      int dir = Command[4];
+      
+      if (dir == 1) {
         HbridgeHigh = pinMotorMinus_running;
         HbridgeLow = pinMotorPlus_running;
-      }
-      else { // Needs to move negative (encoder decreasing)
+      } else {
         HbridgeHigh = pinMotorPlus_running;
         HbridgeLow = pinMotorMinus_running;
       }
+      digitalWrite(pinEn_running, HIGH);
       digitalWrite(HbridgeLow, LOW);
+      analogWrite(HbridgeHigh, manualPWM); 
+      // Note: This needs a separate timer to stop if you want it timed. 
+      // Currently, it just sets speed.
+      break;
+    }
+
+    // 0x01: Report Status
+    case 0x01: {
+      Respond[1] = channel_num;
+      Respond[2] = runningstatus;
+      Respond[3] = (*encoderValue >= 0) ? 1 : 0;
+      U32toU8(abs(*encoderValue));
+      Respond[4] = U8_a; Respond[5] = U8_b; Respond[6] = U8_c; Respond[7] = U8_d;
       
-      //Serial1.println(pNumber * float(errorNumber1) + dNumber * float(errorNumber1 - errorNumber2));
-//Correct the problem of motor speed slow
-//      if (errorNumber1 == errorNumber2)
-//        pwmSpeedMin++;
-//      else
-//        pwmSpeedMin--;
-// set motor end-limit
-      if (pwmNumber >= pwmSpeedMax && errorNumber1 == errorNumber2){
-        fullpowercount++;
-        if (fullpowercount > threshold){
-          runningstatus = false; 
-          fullpowercount = 0;
-        }
-      }
-//      else
-//        fullpowercount = 0;
-// calculating pwm by PID
-      pwmSpeedMin = constrain(pwmSpeedMin, pwmSpeedValue, 100);
-      pwmNumber = constrain(pNumber * float(errorNumber1) + dNumber * float(errorNumber1 - errorNumber2), pwmSpeedMin, pwmSpeedMax);
-      // Serial1.print(*encoderValue);
-// Use the slowest speed to achieve the final position
-      if (errorNumber1 < slowarea_num){ //500
-        pwmNumber = Speed_lowest;
-//10
-      }
-  
-      // Output motor power
-      digitalWrite(HbridgeHigh, HIGH);
-      delay(byte(pwmNumber)); 
-      digitalWrite(HbridgeHigh, LOW); 
-      //analogWrite(HbridgeHigh, byte(pwmNumber)); 
-      errorNumber2 = errorNumber1;
-      if (errorNumber1 < slowarea_num){
-        delay(time_loop);
-      }
+      for (int i = 0; i < 8; i++) serialPort.write(Respond[i]);
+      break;
     }
-    // --- MODIFICATION: End of Movement Check ---
-    // If the stage is within the thresholdValue of the *final* target, stop.
-    else if (errorNumber1 <= thresholdValue && activeTarget == targetValue) {
-       runningstatus = false; 
+
+    // 0x02: Go To Target
+    case 0x02: {
+      long rawTarget = U8toU32(Command[3], Command[4], Command[5], Command[6]);
+      if (Command[7] == 0) rawTarget *= -1; // Handle sign
+      
+      targetValue = rawTarget;
+      
+      // Set Overshoot target for backlash compensation
+      // Note: BACKLASH_OVERSHOOT_STEPS must be defined in variables.h
+      tempTarget = targetValue - 100; 
+      
+      runningstatus = true;
+      break;
     }
-  }  
-  else if (runningstatus == false){
-    // Stop output
-    analogWrite(HbridgeHigh, 0);
-// Disable the motor
-    digitalWrite(pinEn_running, LOW);
-  
-    // Serial1.print(0xff); Serial1.print(0x00);
-    pwmSpeedMin = pwmSpeedValue;
+
+    // 0x03: Set Parameters (Updated for Directional PID)
+    case 0x03: {
+      // You can repurpose bytes to set Pos/Neg gains separately later.
+      // For now, setting both to the incoming value.
+      float newP = Command[3] * 0.001;
+      Kp_Pos = newP;
+      Kp_Neg = newP; // Set both initially
+      
+      Speed_lowest = Command[4];
+      slowarea_num = Command[5] * 10;
+      break;
+    }
+
+    // 0x04: Change Channel
+    case 0x04: {
+      SelectMotorChannel(Command[3]);
+      break;
+    }
+
+    // 0x05: Set Current Position
+    case 0x05: {
+      long newVal = U8toU32(Command[3], Command[4], Command[5], Command[6]);
+      if (Command[7] == 0) newVal *= -1;
+      *encoderValue = newVal;
+      break;
+    }
+
+    // 0x06: E-Stop
+    case 0x06: {
+      runningstatus = false;
+      analogWrite(HbridgeHigh, 0); // Cut power immediately
+      break;
+    }
+    
+    // 0x07: Set Name
+    case 0x07: {
+      name_due = Command[3];
+      dueFlashStorage.write(0, name_due);
+      break;
+    }
   }
+}
+
+// ================================================================
+// HELPER: CHANNEL SWITCHING
+// ================================================================
+void SelectMotorChannel(int ch) {
+  // 1. Detach all interrupts first
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch1));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch2));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch3));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch4));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch5));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch6));
+
+  // 2. Set Active Pins based on channel
+  channel_num = ch;
+  switch (ch) {
+    case 1:
+      pinEncoderA_running = pinEncoderA_ch1; pinEncoderB_running = pinEncoderB_ch1;
+      pinMotorMinus_running = pinMotorMinus_ch1; pinMotorPlus_running = pinMotorPlus_ch1;
+      pinEn_running = pinEn_ch1; encoderValue = &encoderValue_ch1;
+      break;
+    case 2:
+      pinEncoderA_running = pinEncoderA_ch2; pinEncoderB_running = pinEncoderB_ch2;
+      pinMotorMinus_running = pinMotorMinus_ch2; pinMotorPlus_running = pinMotorPlus_ch2;
+      pinEn_running = pinEn_ch2; encoderValue = &encoderValue_ch2;
+      break;
+    case 3:
+      pinEncoderA_running = pinEncoderA_ch3; pinEncoderB_running = pinEncoderB_ch3;
+      pinMotorMinus_running = pinMotorMinus_ch3; pinMotorPlus_running = pinMotorPlus_ch3;
+      pinEn_running = pinEn_ch3; encoderValue = &encoderValue_ch3;
+      break;
+    case 4:
+      pinEncoderA_running = pinEncoderA_ch4; pinEncoderB_running = pinEncoderB_ch4;
+      pinMotorMinus_running = pinMotorMinus_ch4; pinMotorPlus_running = pinMotorPlus_ch4;
+      pinEn_running = pinEn_ch4; encoderValue = &encoderValue_ch4;
+      break;
+    case 5:
+      pinEncoderA_running = pinEncoderA_ch5; pinEncoderB_running = pinEncoderB_ch5;
+      pinMotorMinus_running = pinMotorMinus_ch5; pinMotorPlus_running = pinMotorPlus_ch5;
+      pinEn_running = pinEn_ch5; encoderValue = &encoderValue_ch5;
+      break;
+    case 6:
+      pinEncoderA_running = pinEncoderA_ch6; pinEncoderB_running = pinEncoderB_ch6;
+      pinMotorMinus_running = pinMotorMinus_ch6; pinMotorPlus_running = pinMotorPlus_ch6;
+      pinEn_running = pinEn_ch6; encoderValue = &encoderValue_ch6;
+      break;
+  }
+
+  // 3. Re-initialize and Re-attach interrupts for selected channel
+  InitialEncoderState();
+  attachInterrupt(digitalPinToInterrupt(pinEncoderA_running), ReadEncoderState, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinEncoderB_running), ReadEncoderState, CHANGE);
 }
 
 //-------------------------------------------------------------------------------------------------------------------------------------

@@ -110,3 +110,20 @@ const int BACKLASH_OVERSHOOT_STEPS = 200;
 
 // VARIABLE: Holds the temporary target during the two-step move.
 int tempTarget = 0;
+
+// --- NEW PID PARAMETERS ---
+// Directional P Gains (Proportional)
+float Kp_Pos = 0.020;  // Gain when moving Positive (Original pNumber)
+float Kp_Neg = 0.020;  // Gain when moving Negative (Likely needs to be different)
+
+// Directional D Gains (Derivative)
+float Kd_Pos = 0.0;
+float Kd_Neg = 0.0;
+
+// Minimum PWM to overcome static friction (Stiction)
+// Find this by increasing until motor *just* starts moving.
+int minPWM = 30; 
+
+// Loop timing
+unsigned long lastPIDTime = 0;
+int loopTimeMS = 5; // Run PID loop every 5ms (200Hz)
