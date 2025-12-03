@@ -1,4 +1,3 @@
-
 #define COMMANDLENGTH 15
 #define RESPONDLENGTH 10
 
@@ -18,19 +17,40 @@ byte U8_a, U8_b, U8_c, U8_d;
 byte position_direction = 0;
 byte channel_num = 1;
 
-int thresholdValue = 1;
+int thresholdValue = 2; // Increased slightly to prevent hunting with high PID
 byte fullpowercount = 0;
 
-int errorNumber1, errorNumber2 = 0;
-bool errorDirection = false;
-float pNumber, iNumber, dNumber, pwmNumber = 0;
-byte pwmSpeedMax = 0;
-byte pwmSpeedMin = 0;
+// --- OLD PARAMETERS (Kept if needed for legacy compatibility, but largely replaced) ---
+// int errorNumber1, errorNumber2 = 0; // Replaced by currentError and prevError
+// float pNumber, iNumber, dNumber;    // Replaced by Kp_Pos, Kp_Neg, etc.
+byte pwmSpeedMax = 100;              // Re-enabled: Max 8-bit PWM value
+// byte pwmSpeedMin = 0;               // Replaced by minPWM
+
 byte pwmSpeedValue = 1;
-byte Speed_lowest = 3;
-int time_loop = 20;
-byte threshold = 10;
-int slowarea_num = 500;
+byte Speed_lowest = 100; // Max PWM allowed in "Slow Area"
+int slowarea_num = 500;  // Steps from target to start slowing down
+
+// --- NEW PID & CONTROL PARAMETERS ---
+// Directional P Gains (Proportional)
+float Kp_Pos = 0.020;  // Gain when moving Positive
+float Kp_Neg = 0.020;  // Gain when moving Negative
+
+// Directional D Gains (Derivative)
+float Kd_Pos = 0.0;
+float Kd_Neg = 0.0;
+
+// Minimum PWM to overcome static friction (Stiction)
+// Find this by increasing until motor *just* starts moving.
+int minPWM = 30; 
+
+// Loop timing (Non-blocking)
+unsigned long lastPIDTime = 0;
+int loopTimeMS = 5; // Run PID loop every 5ms (200Hz)
+
+// Backlash Compensation
+const int BACKLASH_OVERSHOOT_STEPS = 200; // Steps to overshoot before returning
+long tempTarget = 0; // The intermediate target
+long prevError = 0;  // For Derivative calculation
 
 // Using pointer to send encoder signal to each channels
 int *encoderValue;
@@ -42,9 +62,15 @@ int diffEncoder = 1;
 bool runningstatus         = false;
 bool motorlimit            = false;
 
+// Function Prototypes
 void count(void);
 void MotorRun(void);
 void processSerialCommands(Stream& serialPort);
+void SelectMotorChannel(int ch);
+void InitialEncoderState(void);
+void ReadEncoderState(void);
+unsigned long U8toU16(int v1, int v2, int v3, int v4);
+void U32toU8(unsigned long value);
 
 int encoderValue_ch1 = 0;
 int encoderValue_ch2 = 0;
@@ -61,7 +87,7 @@ byte pinEncoderB_running = 31;
 byte pinMotorMinus_running = 2;
 byte pinMotorPlus_running = 3;
 byte pinEn_running = 42;
-int targetValue = 0;
+long targetValue = 0; // Changed to long for safety
 
 byte pinEncoderA_ch1 = 30;
 byte pinEncoderB_ch1 = 31;
@@ -101,29 +127,3 @@ byte pinEn_ch6 = 47;
 
 byte HbridgeHigh = pinMotorMinus_running;
 byte HbridgeLow = pinMotorPlus_running;
-//-----------------------------------------------------------------------------------------------------------
-// --- ADD to motor control parameters in variables.h ---
-
-// CONSTANT: Adjust this value based on your stage's measured backlash (steps). 
-// It must be greater than the maximum mechanical backlash.
-const int BACKLASH_OVERSHOOT_STEPS = 200; 
-
-// VARIABLE: Holds the temporary target during the two-step move.
-int tempTarget = 0;
-
-// --- NEW PID PARAMETERS ---
-// Directional P Gains (Proportional)
-float Kp_Pos = 0.020;  // Gain when moving Positive (Original pNumber)
-float Kp_Neg = 0.020;  // Gain when moving Negative (Likely needs to be different)
-
-// Directional D Gains (Derivative)
-float Kd_Pos = 0.0;
-float Kd_Neg = 0.0;
-
-// Minimum PWM to overcome static friction (Stiction)
-// Find this by increasing until motor *just* starts moving.
-int minPWM = 30; 
-
-// Loop timing
-unsigned long lastPIDTime = 0;
-int loopTimeMS = 5; // Run PID loop every 5ms (200Hz)

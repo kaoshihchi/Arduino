@@ -1,27 +1,6 @@
-//Sub program---------------------------------------------------------------------------------------------------------------------------
-// When interupt, it count encoder steps into pointer value
-//void count_A()
-//{
-//  stateEncoderB_running = digitalRead(pinEncoderB_running);
-//    if (stateEncoderB_running == LOW)
-//      ++*encoderValue;
-//    if (stateEncoderB_running == HIGH)
-//      --*encoderValue;
-//}
-//
-//// When interupt, it count encoder steps into pointer value
-//void count_B()
-//{
-//  stateEncoderA_running = digitalRead(pinEncoderA_running);
-//    if (stateEncoderA_running == LOW)
-//      ++*encoderValue;
-//    if (stateEncoderA_running == HIGH)
-//      --*encoderValue;
-//}
-
-
-
-//---------------------------------------------------------------
+// ================================================================
+// ENCODER FUNCTIONS
+// ================================================================
 
 void InitialEncoderState()
 {
@@ -65,8 +44,7 @@ void ReadEncoderState()
       ++*encoderValue;  //+1
     else if (diffEncoder == 3)
       --*encoderValue;  //+3
-    else
-      runningstatus = false; //Missing steps
+    // else runningstatus = false; // Optional: Stop on missed steps
   }
   if (valueEncoder_present < valueEncoder_previous){
     diffEncoder = valueEncoder_previous - valueEncoder_present; 
@@ -74,8 +52,7 @@ void ReadEncoderState()
       --*encoderValue;  //-1
     else if (diffEncoder == 3)
       ++*encoderValue;  //-3
-    else
-      runningstatus = false; //Missing steps
+    // else runningstatus = false; // Optional: Stop on missed steps
   }
 
   valueEncoder_previous = valueEncoder_present; 
@@ -99,11 +76,13 @@ void MotorRun() {
   }
   lastPIDTime = millis();
 
-  // 3. Logic: Overshoot Approach (Your original Backlash strategy)
-  // If we are aiming for tempTarget and reached it, switch to final targetValue
+  // 3. Logic: Overshoot Approach (Backlash strategy)
+  // If we are aiming for tempTarget (Overshoot) and reached it...
   if (tempTarget != targetValue) {
+    // Check if we reached the overshoot target
     if (abs(*encoderValue - tempTarget) <= thresholdValue) {
-      tempTarget = targetValue; // Switch to final approach
+      tempTarget = targetValue; // Switch target to final destination
+      // Slight delay to let mechanics settle could be added here if needed
     }
   }
   
@@ -119,12 +98,12 @@ void MotorRun() {
     return;
   }
 
-  // 5. Direction & Gain Scheduling
+  // 5. Direction Setup & Gain Scheduling
   float currentKp, currentKd;
   
   if (currentError > 0) {
     // POSITIVE DIRECTION
-    HbridgeHigh = pinMotorMinus_running; // Adjust pin mapping if reversed
+    HbridgeHigh = pinMotorMinus_running; // Adjust pin mapping based on your wiring
     HbridgeLow = pinMotorPlus_running; 
     currentKp = Kp_Pos;
     currentKd = Kd_Pos;
@@ -137,37 +116,36 @@ void MotorRun() {
   }
 
   // 6. PID Calculation
-  long errorDelta = currentError - errorNumber2; // errorNumber2 is "prevError"
+  long errorDelta = currentError - prevError; 
+  // Standard PD formula:
   float pidTerm = (currentKp * abs(currentError)) + (currentKd * abs(errorDelta));
   
   // 7. Calculate Final PWM
   int outputPWM = 0;
   
-  // If we are in the "Slow Area" (Close to target), cap the speed
+  // "Slow Area" Logic: If close to target, cap the max speed to prevent overshooting
   if (abs(currentError) < slowarea_num) {
-    // In slow area, use calculated PID but cap it at Speed_lowest if it gets too high? 
-    // Or strictly force Speed_lowest? Your original code forced it.
-    // Ideally: allow PID to work, but cap max speed.
-    outputPWM = constrain(pidTerm + minPWM, minPWM, Speed_lowest);
+    // Allow PID to work, but clamp the maximum result to Speed_lowest
+    outputPWM = constrain((int)(pidTerm + minPWM), minPWM, Speed_lowest);
   } else {
     // Normal operation
     outputPWM = (int)(pidTerm + minPWM);
   }
 
-  // Constrain to 8-bit PWM limits
+  // Constrain to 8-bit PWM limits (0-255)
   outputPWM = constrain(outputPWM, 0, 255);
 
   // 8. Drive Motor (Hardware PWM)
-  digitalWrite(pinEn_running, HIGH); // Enable Driver
-  digitalWrite(HbridgeLow, LOW);     // Ensure Low side is 0V
+  digitalWrite(pinEn_running, HIGH);   // Enable Driver
+  digitalWrite(HbridgeLow, LOW);       // Ensure Low side is 0V
   analogWrite(HbridgeHigh, outputPWM); // PWM the High side
 
   // 9. Store error for next derivative calc
-  errorNumber2 = currentError;
+  prevError = currentError;
 }
 
 // ================================================================
-// CLEANED COMMAND PROCESSOR
+// COMMAND PROCESSOR
 // ================================================================
 void processSerialCommands(Stream& serialPort) {
   // Read Command
@@ -186,7 +164,7 @@ void processSerialCommands(Stream& serialPort) {
     
     // 0x00: Open Loop Move (Manual PWM)
     case 0x00: {
-      int manualPWM = Command[3]; // Use "Traveling Time" byte as PWM power for now
+      int manualPWM = Command[3]; // Use "Traveling Time" byte as PWM power
       int dir = Command[4];
       
       if (dir == 1) {
@@ -196,11 +174,13 @@ void processSerialCommands(Stream& serialPort) {
         HbridgeHigh = pinMotorPlus_running;
         HbridgeLow = pinMotorMinus_running;
       }
+      
       digitalWrite(pinEn_running, HIGH);
       digitalWrite(HbridgeLow, LOW);
       analogWrite(HbridgeHigh, manualPWM); 
-      // Note: This needs a separate timer to stop if you want it timed. 
-      // Currently, it just sets speed.
+      
+      // Note: This needs an external stop command or a non-blocking timer to handle duration.
+      // Currently runs until stopped or new command.
       break;
     }
 
@@ -208,7 +188,7 @@ void processSerialCommands(Stream& serialPort) {
     case 0x01: {
       Respond[1] = channel_num;
       Respond[2] = runningstatus;
-      Respond[3] = (*encoderValue >= 0) ? 1 : 0;
+      Respond[3] = (*encoderValue >= 0) ? 1 : 0; // Sign
       U32toU8(abs(*encoderValue));
       Respond[4] = U8_a; Respond[5] = U8_b; Respond[6] = U8_c; Respond[7] = U8_d;
       
@@ -216,28 +196,31 @@ void processSerialCommands(Stream& serialPort) {
       break;
     }
 
-    // 0x02: Go To Target
+    // 0x02: Go To Target (With Backlash Comp)
     case 0x02: {
       long rawTarget = U8toU32(Command[3], Command[4], Command[5], Command[6]);
       if (Command[7] == 0) rawTarget *= -1; // Handle sign
       
       targetValue = rawTarget;
       
-      // Set Overshoot target for backlash compensation
-      // Note: BACKLASH_OVERSHOOT_STEPS must be defined in variables.h
-      tempTarget = targetValue - 100; 
+      // Set Overshoot target: Aim past the target first to clear backlash
+      // If we are moving Positive, aim (Target - Backlash) then go to Target?
+      // Or simply aim (Target - Backlash) regardless?
+      // Standard approach: Always approach final target from same direction.
+      // Here we set tempTarget = target - backlash.
+      tempTarget = targetValue - BACKLASH_OVERSHOOT_STEPS; 
       
       runningstatus = true;
       break;
     }
 
-    // 0x03: Set Parameters (Updated for Directional PID)
+    // 0x03: Set PID Parameters
     case 0x03: {
-      // You can repurpose bytes to set Pos/Neg gains separately later.
-      // For now, setting both to the incoming value.
+      // Command[3] is mapped to P-gain. 
+      // You can extend protocol to set Pos/Neg separately if needed.
       float newP = Command[3] * 0.001;
       Kp_Pos = newP;
-      Kp_Neg = newP; // Set both initially
+      Kp_Neg = newP; // Set both for now
       
       Speed_lowest = Command[4];
       slowarea_num = Command[5] * 10;
@@ -250,7 +233,7 @@ void processSerialCommands(Stream& serialPort) {
       break;
     }
 
-    // 0x05: Set Current Position
+    // 0x05: Set Current Position (Zeroing)
     case 0x05: {
       long newVal = U8toU32(Command[3], Command[4], Command[5], Command[6]);
       if (Command[7] == 0) newVal *= -1;
@@ -262,6 +245,7 @@ void processSerialCommands(Stream& serialPort) {
     case 0x06: {
       runningstatus = false;
       analogWrite(HbridgeHigh, 0); // Cut power immediately
+      digitalWrite(pinEn_running, LOW);
       break;
     }
     
@@ -278,22 +262,18 @@ void processSerialCommands(Stream& serialPort) {
 // HELPER: CHANNEL SWITCHING
 // ================================================================
 void SelectMotorChannel(int ch) {
-  // 1. Detach all interrupts first
-  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch1));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch2));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch3));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch4));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch5));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6));
-  detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch6));
+  // 1. Detach all interrupts first to prevent ghost counts
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch1)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch1));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch2)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch2));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch3)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch3));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch4)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch4));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch5)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch5));
+  detachInterrupt(digitalPinToInterrupt(pinEncoderA_ch6)); detachInterrupt(digitalPinToInterrupt(pinEncoderB_ch6));
 
   // 2. Set Active Pins based on channel
   channel_num = ch;
+  
+  // Default pointers (will be overwritten by switch)
   switch (ch) {
     case 1:
       pinEncoderA_running = pinEncoderA_ch1; pinEncoderB_running = pinEncoderB_ch1;
@@ -334,13 +314,12 @@ void SelectMotorChannel(int ch) {
 }
 
 //-------------------------------------------------------------------------------------------------------------------------------------
-// Sub function
+// Utility Functions
 
 unsigned long U8toU16(int v1, int v2) {
   unsigned long y1, y2, result;
   y1 = (unsigned long)(v1) << 8;
   y2 = (unsigned long)(v2);
-
   result = y1 + y2;
   return result;
 }
@@ -351,14 +330,13 @@ unsigned long U8toU32(int v1, int v2, int v3, int v4) {
   y2 = (unsigned long)(v2) << 16;
   y3 = (unsigned long)(v3) << 8;
   y4 = (unsigned long)(v4);
-
   y5 = y1 + y2 + y3 + y4;
   return y5;
 }
 
 void U32toU8(unsigned long value){
-  U8_a = value >>24; 
-  U8_b = value >>16; 
-  U8_c = value >>8; 
+  U8_a = value >> 24; 
+  U8_b = value >> 16; 
+  U8_c = value >> 8; 
   U8_d = value;  
 }
