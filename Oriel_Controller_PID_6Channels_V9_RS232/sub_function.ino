@@ -56,10 +56,15 @@ void ReadEncoderState()
   valueEncoder_previous = valueEncoder_present; 
 }
 
+
+
 // ================================================================
-// REVISED MOTOR CONTROL LOOP
+// REVISED MOTOR CONTROL LOOP (With Direction Change Dead-Time)
 // ================================================================
-unsigned long lastMonitorTime = 0; // Timer to prevent flooding USB
+unsigned long lastMonitorTime = 0; 
+int lastDirection = 0;                // To track direction changes
+unsigned long dirChangeTimer = 0;     // To track the pause time
+const int DEAD_TIME_MS = 50;          // 50ms pause when changing direction
 
 void MotorRun() {
   // 1. Safety & Idle Check
@@ -67,6 +72,8 @@ void MotorRun() {
     analogWrite(HbridgeHigh, 0);
     analogWrite(HbridgeLow, 0);    
     digitalWrite(pinEn_running, LOW); 
+    // Reset state when stopped
+    lastDirection = 0;
     return; 
   }
 
@@ -98,7 +105,6 @@ void MotorRun() {
           analogWrite(HbridgeHigh, 0);
           digitalWrite(pinEn_running, LOW);
           
-          // Print Final Status to Native USB
           SerialUSB.print("Target Reached. Final Pos: ");
           SerialUSB.println(currentPos);
           return;
@@ -108,11 +114,32 @@ void MotorRun() {
   // --- PID CONTROL ---
   long currentError = tempTarget - currentPos;
   
-  // Direction Setup
-  float currentKp, currentKd;
-  int signedPowerMultiplier = 1; // Used for monitoring output
+  // Determine Desired Direction
+  int currentDir = 0;
+  if (currentError > 0) currentDir = 1;
+  else if (currentError < 0) currentDir = -1;
 
-  if (currentError > 0) {
+  // --- NEW: DETECT DIRECTION CHANGE ---
+  if (currentDir != lastDirection && lastDirection != 0) {
+     // If direction just changed, start the timer
+     dirChangeTimer = millis();
+  }
+  lastDirection = currentDir;
+
+  // --- NEW: APPLY DEAD TIME ---
+  // If we are within the Dead Time window, force STOP
+  if (millis() - dirChangeTimer < DEAD_TIME_MS) {
+     analogWrite(HbridgeHigh, 0);
+     digitalWrite(HbridgeLow, LOW);
+     digitalWrite(pinEn_running, HIGH); // Keep enabled to allow magnetic braking
+     return; // Skip the rest of the loop (Do not move)
+  }
+
+  // If we passed the Dead Time, proceed with Normal Movement
+  float currentKp, currentKd;
+  int signedPowerMultiplier = 1; 
+
+  if (currentDir == 1) {
     HbridgeHigh = pinMotorMinus_running;
     HbridgeLow = pinMotorPlus_running; 
     currentKp = Kp_Pos;
@@ -123,14 +150,13 @@ void MotorRun() {
     HbridgeLow = pinMotorMinus_running;
     currentKp = Kp_Neg;
     currentKd = Kd_Neg;
-    signedPowerMultiplier = -1;
+    signedPowerMultiplier = -1; 
   }
 
   // PID Math
   long errorDelta = currentError - prevError;
   float pidTerm = (currentKp * abs(currentError)) + (currentKd * abs(errorDelta));
   
-  // Output Generation
   int outputPWM = (int)(pidTerm + minPWM);
   outputPWM = constrain(outputPWM, 0, pwmSpeedMax);
 
@@ -142,13 +168,10 @@ void MotorRun() {
   prevError = currentError;
 
   // ============================================================
-  // TELEMETRY OUTPUT (Native USB Only)
+  // TELEMETRY OUTPUT
   // ============================================================
-  // Print every 50ms to avoid flooding the buffer (20Hz update rate)
   if (millis() - lastMonitorTime > 50) { 
     lastMonitorTime = millis();
-    
-    // Format: "Pos:[value] Pwr:[signed_value]"
     SerialUSB.print("Pos:");
     SerialUSB.print(currentPos);
     SerialUSB.print(" Pwr:");
