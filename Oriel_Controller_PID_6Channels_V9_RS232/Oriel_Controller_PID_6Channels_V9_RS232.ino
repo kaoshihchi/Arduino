@@ -9,6 +9,13 @@ DueFlashStorage dueFlashStorage;
 void setup() {
   // --- NEW: Initialize Native USB for Monitoring ---
   SerialUSB.begin(115200); 
+
+  // --- WAIT FOR CONNECTION ---
+  // The board pauses here until Serial Monitor is opened
+  while (!SerialUSB); 
+  // ---------------------------
+  
+  SerialUSB.println("=== SYSTEM RESTART ===");
   
   // --- OLD: Keep RS232 exactly as it was ---
   Serial1.begin(19200);
@@ -40,8 +47,8 @@ void setup() {
   Kd_Neg = 0.0;
   
   // Ramp Speed: 5 steps per 5ms loop = 1000 steps/sec
-  rampStep = 75;
-  minPWM = 70;       
+  rampStep = 90;
+  minPWM = 60;       
 }
 
 void loop() {

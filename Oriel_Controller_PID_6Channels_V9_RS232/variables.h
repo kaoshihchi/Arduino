@@ -48,7 +48,7 @@ unsigned long lastPIDTime = 0;
 int loopTimeMS = 5; // Run PID loop every 5ms (200Hz)
 
 // Backlash Compensation & Motion Profiling
-const int BACKLASH_OVERSHOOT_STEPS = 200; // Steps to overshoot before returning
+const int BACKLASH_OVERSHOOT_STEPS = 0; // Steps to overshoot before returning
 long finalTarget = 0;      // The ultimate destination
 long tempTarget = 0;       // The "rabbit" the PID chases (Ramp Generator)
 long rampStep = 5;         // Max steps to change tempTarget per loop (Velocity Limit)
