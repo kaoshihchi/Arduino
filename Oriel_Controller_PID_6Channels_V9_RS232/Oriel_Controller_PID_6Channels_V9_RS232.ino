@@ -40,15 +40,15 @@ void setup() {
 
   SelectMotorChannel(1);
   // Initialize PID & Ramp Parameters:
-  float initialP = 50 * 0.001;
+  float initialP = 10 * 0.001;
   Kp_Pos = initialP;
   Kp_Neg = initialP;
-  Kd_Pos = 0.0;
-  Kd_Neg = 0.0;
+  Kd_Pos = 0.5;
+  Kd_Neg = 0.5;
   
   // Ramp Speed: 5 steps per 5ms loop = 1000 steps/sec
   rampStep = 90;
-  minPWM = 60;       
+  minPWM = 65;       
 }
 
 void loop() {

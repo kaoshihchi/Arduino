@@ -155,7 +155,10 @@ void MotorRun() {
 
   // PID Math
   long errorDelta = currentError - prevError;
-  float pidTerm = (currentKp * abs(currentError)) + (currentKd * abs(errorDelta));
+  float pidTerm = (currentKp * abs(currentError)) - (currentKd * abs(errorDelta));
+
+  // Ensure pidTerm doesn't go negative (optional, but good for stability if not using reverse-braking)
+  if (pidTerm < 0) pidTerm = 0;
   
   int outputPWM = (int)(pidTerm + minPWM);
   outputPWM = constrain(outputPWM, 0, pwmSpeedMax);
